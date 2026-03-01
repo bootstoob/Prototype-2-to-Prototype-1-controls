@@ -18,7 +18,7 @@ The minimum jump is extended so Space already activates the jump
 To recover the new DODGE mechanic in Prototype 2, I have opted for double SHIFT although I also thought about double direction key (AWSD):
 If the player presses SHIFT twice in a row and is on the ground (gIsOnAir = 0), a short SPACE press is simulated
 
-
+TO DO:
 I believe the main problem is that instead of pressing the keys in a held manner,
 the simulation presses the keys repeatedly very fast and generates:
 	When I am in the air and press SHIFT it only works correctly on the first press.
