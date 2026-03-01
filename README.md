@@ -7,6 +7,7 @@ I capture the varible to check de player state with CheatEngine:
 
 
 This is the simplest thing I could come up with:
+
 1️⃣ Swap of behavior between SHIFT → Space
 When the character is in the air (gIsOnAir = 1)
 
