@@ -1,0 +1,149 @@
+#include <windows.h>
+
+HMODULE g_hModule = NULL;
+HANDLE g_hThread = NULL;
+uintptr_t adrEstadoMovimiento = 0x062FA974; // Dirección actual del juego
+
+// ===================== CONFIGURACIÓN =====================
+const DWORD doubleTapDelay   = 500;  // Doble Shift más reactivo
+const DWORD jumpLockTime     = 200;  // Bloqueo tras salto corto
+const DWORD jumpMinTimeLong  = 250;  // Duración mínima salto largo
+const DWORD jumpShortTime    = 100;  // Duración salto corto
+
+DWORD lastShiftTime = 0;
+DWORD lastJumpTime  = 0;
+
+bool scriptActivo   = true;
+bool shiftBloqueado = false;
+bool enSaltoLargo   = false;
+
+#define SCAN_SHIFT 0x2A
+#define SCAN_SPACE 0x39
+
+// Previos para flancos
+bool spacePrevPressedSuelo = false;
+bool shiftPrevPressedAire = false;
+bool spacePrevPressedAire = false;
+
+// ===================== FUNCIONES =====================
+bool HayDireccionPulsada() {
+    return (GetAsyncKeyState('W') & 0x8000) ||
+           (GetAsyncKeyState('A') & 0x8000) ||
+           (GetAsyncKeyState('S') & 0x8000) ||
+           (GetAsyncKeyState('D') & 0x8000);
+}
+
+void EnviarTecla(WORD scan, bool down) {
+    INPUT in = {};
+    in.type = INPUT_KEYBOARD;
+    in.ki.wVk = 0;
+    in.ki.wScan = scan;
+    in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    SendInput(1, &in, sizeof(INPUT));
+}
+
+void SaltoCorto() {
+    lastJumpTime = GetTickCount();
+    EnviarTecla(SCAN_SPACE, true);
+    Sleep(jumpShortTime);
+    EnviarTecla(SCAN_SPACE, false);
+}
+
+void SaltoLargo() {
+    lastJumpTime = GetTickCount();
+    enSaltoLargo = true;
+
+    EnviarTecla(SCAN_SPACE, true);
+    DWORD start = GetTickCount();
+    while (GetTickCount() - start < jumpMinTimeLong) Sleep(1);
+
+    while (GetAsyncKeyState(VK_SPACE) & 0x8000) Sleep(1);
+
+    EnviarTecla(SCAN_SPACE, false);
+    enSaltoLargo = false;
+}
+
+// ===================== HILO PRINCIPAL =====================
+DWORD WINAPI MainThread(LPVOID) {
+    Sleep(1000); // Espera a que el juego cargue
+
+    while (true) {
+        int estado = -1;
+        __try { estado = *(int*)adrEstadoMovimiento; } 
+        __except (EXCEPTION_EXECUTE_HANDLER) { Sleep(1); continue; }
+
+        bool enSuelo = (estado == 0);
+        DWORD now = GetTickCount();
+
+        if (shiftBloqueado && now - lastJumpTime > jumpLockTime)
+            shiftBloqueado = false;
+
+        if (scriptActivo) {
+            // -------------------- SUELO --------------------
+            if (enSuelo) {
+                // Doble Shift → Salto corto
+                bool shiftPressed = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+                if (shiftPressed && HayDireccionPulsada() && !shiftBloqueado) {
+                    if (lastShiftTime && now - lastShiftTime < doubleTapDelay &&
+                        now - lastJumpTime > jumpLockTime) {
+                        shiftBloqueado = true;
+                        lastShiftTime = 0;
+                        SaltoCorto();
+                        continue; // prioridad sobre Space
+                    } else {
+                        lastShiftTime = now;
+                    }
+                }
+
+                // Space normal → Salto largo
+                bool spacePressed = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+                if (spacePressed && !spacePrevPressedSuelo && HayDireccionPulsada() && !enSaltoLargo) {
+                    SaltoLargo();
+                }
+                spacePrevPressedSuelo = spacePressed;
+            }
+
+            // -------------------- AIRE --------------------
+            else if (estado == 1) {
+                bool shiftPressed = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+                bool spacePressed = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+
+                // Shift actúa como Space
+                if (shiftPressed && !shiftPrevPressedAire) EnviarTecla(SCAN_SPACE, true);
+                if (!shiftPressed && shiftPrevPressedAire) EnviarTecla(SCAN_SPACE, false);
+                shiftPrevPressedAire = shiftPressed;
+
+                // Space actúa como Shift
+                if (spacePressed && !spacePrevPressedAire) EnviarTecla(SCAN_SHIFT, true);
+                if (!spacePressed && spacePrevPressedAire) EnviarTecla(SCAN_SHIFT, false);
+                spacePrevPressedAire = spacePressed;
+            }
+        }
+
+        // -------------------- Controles F10/F11 --------------------
+        if (GetAsyncKeyState(VK_F11) & 1) {
+            Beep(300, 200);
+            FreeLibraryAndExitThread(g_hModule, 0);
+        }
+
+        if (GetAsyncKeyState(VK_F10) & 1) {
+            scriptActivo = !scriptActivo;
+            Beep(scriptActivo ? 1000 : 500, 200);
+        }
+
+        if (!scriptActivo) Sleep(10);
+        Sleep(1);
+    }
+
+    return 0;
+}
+
+// ===================== DLL ENTRY =====================
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        g_hModule = hModule;
+        DisableThreadLibraryCalls(hModule);
+        g_hThread = CreateThread(NULL, 0, MainThread, NULL, 0, NULL);
+    }
+    return TRUE;
+}
